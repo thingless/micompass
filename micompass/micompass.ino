@@ -1,13 +1,24 @@
-#include <SoftwareSerial.h>
+#include <SoftwareSerial.h>1
 #include "TinyGPS++.h"
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_HMC5883_U.h>
 #include <TimerOne.h>
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_PCD8544.h>
 
 TinyGPSPlus gps;
 
 SoftwareSerial mySerial(6, 7); // RX, TX
+
+// Software SPI (slower updates, more flexible pin options):
+// pin 4 - Serial clock out (SCLK)
+// pin 3 - Serial data out (DIN)
+// pin 2 - Data/Command select (D/C)
+// pin 8 - LCD chip select (CS)
+// pin 9 - LCD reset (RST)
+Adafruit_PCD8544 display = Adafruit_PCD8544(4, 3, 2, 8, 9);
 
 TinyGPSLocation gTargetLocation;
 int gLedState = LOW;
@@ -19,6 +30,7 @@ void setup()
 {
   pinMode(10, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
+  mag.begin();
   
   // Open serial communications to the PC and wait for port to open:
   Serial.begin(57600);
@@ -33,6 +45,12 @@ void setup()
 
   Timer1.initialize(1000000);
   Timer1.attachInterrupt(blinkLED); // blinkLED to run every 0.15 seconds
+
+  display.begin();
+  display.setContrast(50);
+  display.display(); // show splashscreen
+  delay(500);
+  display.clearDisplay();   // clears the screen and buffer
 }
 
 volatile unsigned long gDelay = 1000000;
@@ -50,13 +68,11 @@ void blinkLED(void)
   Timer1.setPeriod(gDelay);
 }
 
-void loop() // run over and over
-{
+void loop() {
   float heading;
   double courseTo;
   
   // TODO: error conditions?
-  mag.begin();
   
   while (mySerial.available() > 0) {
     gps.encode(mySerial.read());
@@ -98,6 +114,14 @@ void loop() // run over and over
     Serial.print("HEADING=");  Serial.println(heading);
     Serial.print("DELAY=");    Serial.println(myDelay / 1000);
     Serial.println("---------------------------------");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(BLACK);
+    display.print("comp "); display.println(heading);
+    display.print("dist "); display.println(distanceM);
+    display.print("head "); display.println(courseTo);
+    display.print("#sat "); display.println(gps.satellites.value());
+    display.display();
   }
 
   int state = digitalRead(10);
