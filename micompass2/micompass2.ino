@@ -135,8 +135,11 @@ void loop() {
     display.setTextColor(BLACK);
     display.print(" lat "); display.println(gps.location.lat());
     display.print("long "); display.println(gps.location.lng());
-    display.print("date "); display.println(gps.date.value());
-    display.print("time "); display.println(gps.time.value());
+    char date[9], time[9];
+    sprintf(date, "%0.2d-%0.2d-%0.2d", gps.date.year()-2000, gps.date.month(), gps.date.day());
+    sprintf(time, "%.2d:%0.2d:%0.2d", gps.time.hour(), gps.time.minute(), gps.time.second());
+    display.print("date "); display.println(date);
+    display.print("time "); display.println(time);
     display.print("hdop "); display.println(gps.hdop.value());
     
     
