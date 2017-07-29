@@ -27,6 +27,7 @@
 // GPS serial
 #define GPS_RX      11 // "RX" on Trinket, "TX" on GPS
 #define GPS_TX      12 // "TX" on Trinket, "RX" on GPS
+#define BUTTON2     13 // Action button
 #define NONEXISTANT_OUTPUT 10
 
 //
@@ -64,6 +65,7 @@ enum Screens {
   SCREEN_COMPASS             = 0x0b,
   SCREEN_9DOF_MAG_CAL_BIAS   = 0x0c,
   SCREEN_9DOF_MAG_CAL_SCALE  = 0x0d,
+  SCREEN_9DOF_MAG_RAW        = 0x0e,
 };
 #define DEFAULT_SCREEN           SCREEN_GPS
 
@@ -108,7 +110,7 @@ enum Mscale {
   MFS_16BITS      // 0.15 mG per LSB
 };
 uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magnetometer resolution
-uint8_t Mmode = 0x02;        // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
+uint8_t Mmode = 0x06;        // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
 float magCalibration[3] = {0, 0, 0}, magbias[3] = {0, 0, 0}, magscale[3] = {0, 0, 0};  // Factory mag calibration and mag biases from hand calibration
 
 //
@@ -125,6 +127,8 @@ void setup()
 {
   pinMode(BUTTON, INPUT);
   digitalWrite(BUTTON, HIGH);
+  pinMode(BUTTON2, INPUT);
+  digitalWrite(BUTTON2, HIGH);
   pinMode(LED_BUILTIN, OUTPUT);
 
   // set the data rate for the SoftwareSerial port
@@ -186,6 +190,7 @@ void blinkLED(void)
 
 int gpsDataEverReceived;
 int buttonDown=0;
+int button2Down=0;
 void loop() {
   //float heading;
   //double courseTo;
@@ -206,6 +211,7 @@ void loop() {
     case SCREEN_9DOF_ADDR: screen9DOFAddr(); break;
     case SCREEN_9DOF_ACCEL: screen9DOFAccel(); break;
     case SCREEN_9DOF_MAG: screen9DOFMag(); break;
+    case SCREEN_9DOF_MAG_RAW: screen9DOFMagRaw(); break;
     case SCREEN_9DOF_MAG_CAL: screen9DOFMagCal(); break;
     case SCREEN_9DOF_MAG_CAL_BIAS: screen9DOFMagCalBias(); break;
     case SCREEN_9DOF_GYRO: screen9DOFGyro(); break;
@@ -220,18 +226,41 @@ void loop() {
   int buttonState = !digitalRead(BUTTON);
   int buttonPress = (buttonState && !buttonDown);
   buttonDown = buttonState;
-  if (buttonPress) {
-    if (screenToShow == SCREEN_9DOF_MAG_CAL_BIAS && 
-    (magbias[0] == 0  || magbias[1] == 0  || magbias[2] == 0) || 
-    (magscale[0] == 0 || magscale[1] == 0 || magscale[2] == 0)) {
-      magcalMPU9250(magbias, magscale);
-      EEPROM.write(MAG_BIAS, magbias[0]);
-      EEPROM.write(MAG_BIAS+4, magbias[1]);
-      EEPROM.write(MAG_BIAS+8, magbias[2]);
-      EEPROM.write(MAG_SCALE, magscale[0]);
-      EEPROM.write(MAG_SCALE+4, magscale[1]);
-      EEPROM.write(MAG_SCALE+8, magscale[2]);
+
+  int button2State = !digitalRead(BUTTON2);
+  int button2Press = (buttonState && !buttonDown);
+  button2Down = button2State;
+
+  if (button2Press) {
+    // Action button
+    switch (screenToShow) {
+      case SCREEN_9DOF_MAG_CAL_BIAS:
+      case SCREEN_9DOF_MAG_CAL_SCALE:
+        magcalMPU9250(magbias, magscale);
+        EEPROM.write(MAG_BIAS, magbias[0]);
+        EEPROM.write(MAG_BIAS+4, magbias[1]);
+        EEPROM.write(MAG_BIAS+8, magbias[2]);
+        EEPROM.write(MAG_SCALE, magscale[0]);
+        EEPROM.write(MAG_SCALE+4, magscale[1]);
+        EEPROM.write(MAG_SCALE+8, magscale[2]);
+        break;
+      case SCREEN_GPS:
+        //Serial.println("Updating target to current loc");
+        gTargetLocation = gps.location;
+        EEPROM.write(GPS_ADDRESS_LAT, gTargetLocation.lat());
+        EEPROM.write(GPS_ADDRESS_LONG, gTargetLocation.lng());
+        EEPROM.write(GPS_ADDRESS_ALTITUDE, gps.altitude.value());
+        EEPROM.write(GPS_ADDRESS_DATE, gps.date.value());
+        EEPROM.write(GPS_ADDRESS_TIME, gps.time.value());
+        //for (int i=0; i<sizeof(gTargetLocation); i++) {
+        //   EEPROM.write(GPS_ADDRESS+i, ((byte*)(void*)gTargetLocation)[i]);
+        //}
+        break;
+      default:
+        break; 
     }
+  }
+  if (buttonPress) {
     // Rotate screens
     switch (screenToShow) {
       case SCREEN_GPS:
@@ -240,14 +269,17 @@ void loop() {
       case SCREEN_9DOF_ADDR:
       case SCREEN_9DOF_RAW:
       case SCREEN_9DOF_ACCEL:
+        screenToShow = SCREEN_9DOF_MAG_RAW; break;
+      case SCREEN_9DOF_MAG_RAW:
         screenToShow = SCREEN_9DOF_MAG; break;
       case SCREEN_MAG_ADDR:
       case SCREEN_9DOF_MAG:
-        screenToShow = SCREEN_9DOF_MAG_CAL_BIAS; break;
+        screenToShow = SCREEN_9DOF_MAG_CAL; break;
       case SCREEN_9DOF_MAG_CAL:
+        screenToShow = SCREEN_9DOF_MAG_CAL_BIAS; break;
       case SCREEN_9DOF_MAG_CAL_BIAS:
         screenToShow = SCREEN_9DOF_MAG_CAL_SCALE; break;
-        case SCREEN_9DOF_MAG_CAL_SCALE:
+      case SCREEN_9DOF_MAG_CAL_SCALE:
         screenToShow = SCREEN_COMPASS; break;
       case SCREEN_COMPASS:
         screenToShow = SCREEN_GPS; break;
@@ -257,18 +289,7 @@ void loop() {
         screenToShow = SCREEN_GPS; break;
     }
 
-    EEPROM.write(SCREEN_ADDRESS, screenToShow);
-    
-    //Serial.println("Updating target to current loc");
-    gTargetLocation = gps.location;
-    EEPROM.write(GPS_ADDRESS_LAT, gTargetLocation.lat());
-    EEPROM.write(GPS_ADDRESS_LONG, gTargetLocation.lng());
-    EEPROM.write(GPS_ADDRESS_ALTITUDE, gps.altitude.value());
-    EEPROM.write(GPS_ADDRESS_DATE, gps.date.value());
-    EEPROM.write(GPS_ADDRESS_TIME, gps.time.value());
-    //for (int i=0; i<sizeof(gTargetLocation); i++) {
-    //   EEPROM.write(GPS_ADDRESS+i, ((byte*)(void*)gTargetLocation)[i]);
-    //}
+    EEPROM.write(SCREEN_ADDRESS, screenToShow);    
   }
 
   delay(1);
@@ -316,7 +337,7 @@ void screen9DOFMagCalScale() {
    display.display();
 }
 
-void screen9DOFMag() {
+void screen9DOFMagRaw() {
   display.setContrast(50);
   
   display.setTextSize(1);
@@ -324,24 +345,46 @@ void screen9DOFMag() {
   int16_t magData[3];
   readMagData(magData);
 
-  float mRes = 10.*4912./8190.;
-  //magbias[0] = +470.;  // User environmental x-axis correction in milliGauss, should be automatically calculated
-  //magbias[1] = +120.;  // User environmental x-axis correction in milliGauss
-  //magbias[2] = +125.;  // User environmental x-axis correction in milliGauss
+  float mRes = getMres();
+
+  // Calculate the magnetometer values in milliGauss
+  // Include factory calibration per data sheet and user environmental corrections
+  float mx,my,mz,mm;
+  //if (magData[0] == 0) return;
+  mx = (float)magData[0]*mRes*magCalibration[0];  // get actual magnetometer value, this depends on scale being set
+  my = (float)magData[1]*mRes*magCalibration[1];
+  mz = (float)magData[2]*mRes*magCalibration[2];
+  mm = norm(mx, my, mz);
+
+  display.clearDisplay();
+  display.setCursor(0, 0 ); display.print("9-DOF Mag Raw");
+  display.setCursor(0, 10); display.print("X   "); display.println(mx);
+  display.setCursor(0, 20); display.print("Y   "); display.println(my);
+  display.setCursor(0, 30); display.print("Z   "); display.println(mz);
+  display.setCursor(0, 40); display.print("|M| "); display.println(mm);
+  display.display();
+}
+
+void screen9DOFMag() {
+  display.setContrast(50);
+  
+  display.setTextSize(1);
+  display.setTextColor(BLACK);
+  int16_t magData[3];
+  
+  readMagData(magData);
+
+  float mRes = getMres();
 
   // Calculate the magnetometer values in milliGauss
   // Include factory calibration per data sheet and user environmental corrections
   float mx,my,mz,mm;
   if (magData[0] == 0) return;
-  mx = (float)magData[0]*mRes*magCalibration[0]*magscale[0] - magbias[0];  // get actual magnetometer value, this depends on scale being set
-  my = (float)magData[1]*mRes*magCalibration[1]*magscale[1] - magbias[1];
-  mz = (float)magData[2]*mRes*magCalibration[2]*magscale[2] - magbias[2];
+  mx = ((float)magData[0]*mRes*magCalibration[0] - magbias[0]) * magscale[0];  // get actual magnetometer value, this depends on scale being set
+  my = ((float)magData[1]*mRes*magCalibration[1] - magbias[1]) * magscale[1];
+  mz = ((float)magData[2]*mRes*magCalibration[2] - magbias[2]) * magscale[2];
   mm = norm(mx, my, mz);
 
-  
-  //char mag[13];
-  //sprintf(mag, "%0.4x%0.4x%0.4x", magData[0], magData[1], magData[2]);
-  //display.setCursor(0, 10); display.print(mag);
   if (mx != 0) {
     display.clearDisplay();
     display.setCursor(0, 0 ); display.print("9-DOF Mag");
@@ -352,6 +395,7 @@ void screen9DOFMag() {
     display.display();
   }
 }
+
 
 void screen9DOFAccel() {
   display.setContrast(50);
@@ -442,15 +486,15 @@ void screenCompass() {
   int16_t magData[3];
   readMagData(magData);
 
-  float mRes = 10.*4912./8190.;
+  float mRes = getMres();
 
   // Calculate the magnetometer values in milliGauss
   // Include factory calibration per data sheet and user environmental corrections
   float mx,my,mz,mm;
   if (magData[0] == 0) return;
-  mx = (float)magData[0]*mRes*magCalibration[0]*magscale[0] - magbias[0];  // get actual magnetometer value, this depends on scale being set
-  my = (float)magData[1]*mRes*magCalibration[1]*magscale[1] - magbias[1];
-  mz = (float)magData[2]*mRes*magCalibration[2]*magscale[2] - magbias[2];
+  mx = ((float)magData[0]*mRes*magCalibration[0] - magbias[0]) * magscale[0];  // get actual magnetometer value, this depends on scale being set
+  my = ((float)magData[1]*mRes*magCalibration[1] - magbias[1]) * magscale[1];
+  mz = ((float)magData[2]*mRes*magCalibration[2] - magbias[2]) * magscale[2];
   mm = norm(mx, my, mz);
 
   int16_t accelData[3];
@@ -656,10 +700,14 @@ void magcalMPU9250(float * dest1, float * dest2)
   uint16_t ii = 0, sample_count = 0;
   int32_t mag_bias[3] = {0, 0, 0};
   int16_t mag_max[3] = {-32767, -32767, -32767}, mag_min[3] = {32767, 32767, 32767}, mag_temp[3] = {0, 0, 0};
- 
-  //Serial.println("Mag Calibration: Wave device in a figure eight until done!");
-  
-  sample_count = 64;
+
+  display.clearDisplay();
+  display.println("Mag Calibration: Wave device in a figure eight until done!");
+  display.display();
+
+  delay(4000);
+  if(Mmode == 0x02) sample_count = 128;  // at 8 Hz ODR, new mag data is available every 125 ms
+  if(Mmode == 0x06) sample_count = 1500;  // at 100 Hz ODR, new mag data is available every 10 ms
   for(ii = 0; ii < sample_count; ii++) {
     readMagData(mag_temp);  // Read the mag data   
     while (mag_temp[0]==0) { delay(10); readMagData(mag_temp); }
@@ -667,8 +715,13 @@ void magcalMPU9250(float * dest1, float * dest2)
       if(mag_temp[jj] > mag_max[jj]) mag_max[jj] = mag_temp[jj];
       if(mag_temp[jj] < mag_min[jj]) mag_min[jj] = mag_temp[jj];
     }
-    delay(135);  // at 8 Hz ODR, new mag data is available every 125 ms
+    if(Mmode == 0x02) delay(135);  // at 8 Hz ODR, new mag data is available every 125 ms
+    if(Mmode == 0x06) delay(12);  // at 100 Hz ODR, new mag data is available every 10 ms
   }
+
+  display.clearDisplay();
+  display.println("Mag cal done");
+  display.display();
 
   mag_bias[0]  = (mag_max[0] + mag_min[0])/2;  // get average x mag bias in counts
   mag_bias[1]  = (mag_max[1] + mag_min[1])/2;  // get average y mag bias in counts
